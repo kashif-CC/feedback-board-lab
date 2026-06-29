@@ -100,7 +100,7 @@ export default function FeedbackPage() {
             <span style={{ color: '#888', marginLeft: '1rem', fontSize: '0.85rem' }}>
               {item.createdAt}
             </span>
-            {/* FIX #3: plain text, no dangerouslySetInnerHTML */}
+            {/* FIX #3: render as plain text instead of raw HTML */}
             <p>{item.text}</p>
             <button
               onClick={() => handleDelete(item.id)}
