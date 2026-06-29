@@ -2,9 +2,6 @@
 
 import { useState, useEffect } from 'react';
 
-// FLAW #4: Authorization decided entirely on the client — anyone can flip this to true
-const isAdmin = true;
-
 export default function FeedbackPage() {
   const [feedbackList, setFeedbackList] = useState([]);
   const [name, setName] = useState('');
@@ -24,12 +21,15 @@ export default function FeedbackPage() {
   async function handleSubmit(e) {
     e.preventDefault();
     setStatus('Submitting...');
-    // FLAW #2: No client-side validation either — any shape/length goes
-    await fetch('/api/feedback', {
+    const res = await fetch('/api/feedback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, text }),
     });
+    if (!res.ok) {
+      setStatus('Submission failed — check your input.');
+      return;
+    }
     setName('');
     setText('');
     setStatus('Submitted!');
@@ -37,12 +37,25 @@ export default function FeedbackPage() {
   }
 
   async function handleDelete(id) {
-    // FLAW #4: Sends isAdmin from client; server trusts it without real auth
-    await fetch('/api/feedback', {
+    // FIX #4: client no longer claims isAdmin; server checks the real key.
+    // For this lab, the admin key is typed by the user at delete-time
+    // (in a real app this would come from a logged-in session/token).
+    const key = window.prompt('Enter admin key to delete:');
+    if (!key) return; 
+
+    const res = await fetch('/api/feedback', {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, isAdmin }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ id }),
     });
+
+    if (!res.ok) {
+      alert('Delete forbidden — wrong or missing admin key.');
+      return;
+    }
     loadFeedback();
   }
 
@@ -87,16 +100,14 @@ export default function FeedbackPage() {
             <span style={{ color: '#888', marginLeft: '1rem', fontSize: '0.85rem' }}>
               {item.createdAt}
             </span>
-            {/* FLAW #3: Stored XSS — item.text rendered as raw HTML */}
-            <p dangerouslySetInnerHTML={{ __html: item.text }} />
-            {isAdmin && (
-              <button
-                onClick={() => handleDelete(item.id)}
-                style={{ background: '#c00', color: '#fff', border: 'none', padding: '0.25rem 0.75rem', cursor: 'pointer', borderRadius: '3px' }}
-              >
-                Delete
-              </button>
-            )}
+            {/* FIX #3: plain text, no dangerouslySetInnerHTML */}
+            <p>{item.text}</p>
+            <button
+              onClick={() => handleDelete(item.id)}
+              style={{ background: '#c00', color: '#fff', border: 'none', padding: '0.25rem 0.75rem', cursor: 'pointer', borderRadius: '3px' }}
+            >
+              Delete
+            </button>
           </li>
         ))}
       </ul>

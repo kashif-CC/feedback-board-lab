@@ -1,63 +1,76 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { readAll, writeAll } from '../../../lib/store';
 
-// FLAW #1: Hardcoded secret committed to source — admin key used for... nothing, really
-const ADMIN_KEY = 'sk-admin-12345'; // admin key
+// FIX #1: secret now comes from the environment.
+// Fail loudly at import time if it's missing — never fail silently.
+const ADMIN_KEY = process.env.ADMIN_KEY;
+if (!ADMIN_KEY) {
+  throw new Error('ADMIN_KEY environment variable is not set. Add it to .env.local.');
+}
 
-// formatRelativeTime is imported from our date utils
-// FLAW #6 (hallucination artifact): This helper was referenced in AI-generated code but
-// never actually defined or imported. Guarded with typeof check so the app still runs.
-// The call below always falls through to the raw value because the function doesn't exist.
+// FIX #2: zod schema for incoming feedback
+const feedbackSchema = z.object({
+  name: z.string().min(1).max(100),
+  text: z.string().min(1).max(2000),
+});
 
 export async function GET() {
   const items = readAll();
-  const formatted = items.map((item) => ({
-    ...item,
-    // from our date utils
-    displayTime: typeof formatRelativeTime === 'function'
-      ? formatRelativeTime(item.createdAt)
-      : item.createdAt,
-  }));
-  return NextResponse.json(formatted);
+  // FIX #6: hallucinated formatRelativeTime() call removed — just return createdAt.
+  return NextResponse.json(items);
 }
 
 export async function POST(request) {
   const body = await request.json();
-  const items = readAll();
 
-  // FLAW #2: No input validation — name/text not checked for type, length, or content
+  // FIX #2: validate before touching storage
+  const result = feedbackSchema.safeParse(body);
+  if (!result.success) {
+    return NextResponse.json({ error: result.error.flatten() }, { status: 400 });
+  }
+
   const newItem = {
     id: Date.now().toString(),
-    name: body.name,
-    text: body.text,
+    name: result.data.name,
+    text: result.data.text,
     createdAt: new Date().toISOString(),
   };
 
+  const items = readAll();
   items.push(newItem);
 
-  // FLAW #5: Silent failure — if the write fails, the error is swallowed entirely
+  // FIX #5: no more empty catch — log and surface a real error
   try {
     writeAll(items);
-  } catch (e) {}
+  } catch (err) {
+    console.error('[feedback] write failed:', err);
+    return NextResponse.json({ error: 'Storage error' }, { status: 500 });
+  }
 
   return NextResponse.json(newItem, { status: 201 });
 }
 
 export async function DELETE(request) {
-  const body = await request.json();
+  // FIX #4: real server-side auth check via Authorization header
+  const authHeader = request.headers.get('authorization') || '';
+  const token = authHeader.replace('Bearer ', '');
 
-  // FLAW #4: Trusts isAdmin from the client body — no real authentication
-  if (!body.isAdmin) {
+  if (token !== ADMIN_KEY) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
+  const body = await request.json();
   const items = readAll();
   const updated = items.filter((item) => item.id !== body.id);
 
-  // FLAW #5: Same silent failure pattern on delete write
+  // FIX #5: same fix applied to the delete write path
   try {
     writeAll(updated);
-  } catch (e) {}
+  } catch (err) {
+    console.error('[feedback] delete write failed:', err);
+    return NextResponse.json({ error: 'Storage error' }, { status: 500 });
+  }
 
   return NextResponse.json({ success: true });
 }
